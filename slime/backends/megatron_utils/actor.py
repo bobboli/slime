@@ -22,6 +22,7 @@ from slime.utils.data import process_rollout_data
 from slime.utils.distributed_utils import get_gloo_group
 from slime.utils.memory_utils import clear_memory, print_memory
 from slime.utils.misc import Box
+from slime.utils.mxfp8 import validate_mxfp8_rollout_config
 from slime.utils.reloadable_process_group import (
     destroy_process_groups,
     monkey_patch_torch_dist,
@@ -92,6 +93,13 @@ class MegatronTrainRayActor(TrainRayActor):
             dist.barrier(group=get_gloo_group())
 
         dist.barrier(group=get_gloo_group())
+
+        quantization_config = getattr(self.hf_config, "quantization_config", None)
+        if role != "critic":
+            validate_mxfp8_rollout_config(
+                quantization_config,
+                getattr(self.args, "sglang_quantization", None),
+            )
 
         self.model, self.optimizer, self.opt_param_scheduler, loaded_rollout_id = initialize_model_and_optimizer(
             args, role
@@ -178,7 +186,7 @@ class MegatronTrainRayActor(TrainRayActor):
             self.model,
             weights_getter=lambda: self.weights_backuper.get("actor"),
             model_name=type(self.hf_config).__name__.lower() if self.args.model_name is None else self.args.model_name,
-            quantization_config=getattr(self.hf_config, "quantization_config", None),
+            quantization_config=quantization_config,
         )
         self.weight_updater.weight_version = getattr(self.args, "update_weight_start_version", 0)
 
