@@ -16,7 +16,14 @@ import safetensors.torch
 import torch
 from tqdm import tqdm
 
-from slime.utils.mxfp8 import MXFP8_GROUP_SIZE, is_mxfp8_weight_excluded, mxfp8_quantize, normalize_mxfp8_exclusions
+from slime.utils.mxfp8 import (
+    MXFP8_GROUP_SIZE,
+    is_mxfp8_weight_excluded,
+    mxfp8_quantize,
+    mxfp8_scale_name,
+    mxfp8_weight_module_name,
+    normalize_mxfp8_exclusions,
+)
 
 TARGET_MXFP8_BLOCK_SIZE = [1, MXFP8_GROUP_SIZE]
 
@@ -118,9 +125,9 @@ def _build_exclusions(
     extra_patterns = tuple(pattern for pattern in extra_high_precision_layers if pattern)
 
     for weight_name in weight_names:
-        if not weight_name.endswith(".weight"):
+        module_name = mxfp8_weight_module_name(weight_name)
+        if module_name is None:
             continue
-        module_name = weight_name.removesuffix(".weight")
         layer = _decoder_layer_prefix(weight_name)
         if module_name.startswith("model.visual."):
             exclusions.add("model.visual")
@@ -153,7 +160,7 @@ def _process_file(
     with safetensors.safe_open(input_path / filename, framework="pt", device=device) as file:
         for name in file.keys():
             tensor = file.get_tensor(name)
-            if not name.endswith(".weight") or is_mxfp8_weight_excluded(name, exclusions):
+            if mxfp8_weight_module_name(name) is None or is_mxfp8_weight_excluded(name, exclusions):
                 output_tensors[name] = tensor
                 continue
             if tensor.ndim < 2:
@@ -168,7 +175,7 @@ def _process_file(
 
             qweight, scale = mxfp8_quantize(tensor)
             output_tensors[name] = qweight
-            output_tensors[name.removesuffix(".weight") + ".weight_scale_inv"] = scale
+            output_tensors[mxfp8_scale_name(name)] = scale
 
     safetensors.torch.save_file(
         output_tensors,

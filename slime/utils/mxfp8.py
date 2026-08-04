@@ -21,6 +21,11 @@ _QWEN35_GDN_MODULES = (
     "out_proj",
 )
 
+_QWEN35_FUSED_EXPERT_WEIGHTS = (
+    ".mlp.experts.gate_up_proj",
+    ".mlp.experts.down_proj",
+)
+
 
 def validate_mxfp8_config(quantization_config: Mapping[str, object]) -> None:
     """Validate the serialized MXFP8 checkpoint contract used for rollout updates."""
@@ -178,6 +183,25 @@ def is_mxfp8_weight_excluded(weight_name: str, modules: Collection[str]) -> bool
         if not candidates.isdisjoint(excluded_modules):
             return True
     return False
+
+
+def mxfp8_weight_module_name(tensor_name: str) -> str | None:
+    """Return the module name for a canonical Qwen3.5 weight tensor."""
+    if tensor_name.endswith(".weight"):
+        return tensor_name.removesuffix(".weight")
+    if tensor_name.endswith(_QWEN35_FUSED_EXPERT_WEIGHTS):
+        return tensor_name
+    return None
+
+
+def mxfp8_scale_name(weight_name: str) -> str:
+    """Return SGLang's canonical UE8M0 scale name for a Qwen3.5 weight."""
+    module_name = mxfp8_weight_module_name(weight_name)
+    if module_name is None:
+        raise ValueError(f"Expected a canonical Qwen3.5 weight tensor, got {weight_name}.")
+    if weight_name.endswith(".weight"):
+        return f"{module_name}.weight_scale_inv"
+    return f"{module_name}_scale_inv"
 
 
 def mxfp8_quantize(weight: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:

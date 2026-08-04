@@ -250,6 +250,45 @@ def test_processor_quantizes_supported_megatron_weights(monkeypatch, megatron_na
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("megatron_name", "hf_name"),
+    [
+        (
+            "module.module.decoder.layers.1.mlp.experts.linear_fc1",
+            "model.language_model.layers.1.mlp.experts.gate_up_proj",
+        ),
+        (
+            "module.module.decoder.layers.1.mlp.experts.linear_fc2",
+            "model.language_model.layers.1.mlp.experts.down_proj",
+        ),
+    ],
+)
+def test_processor_quantizes_grouped_experts(monkeypatch, megatron_name, hf_name):
+    weight = torch.ones(3, 8, 64, dtype=torch.bfloat16)
+    monkeypatch.setattr(
+        quantizer_mxfp8,
+        "mxfp8_quantize",
+        lambda tensor: (
+            torch.zeros(tensor.shape, dtype=torch.float8_e4m3fn),
+            torch.ones((*tensor.shape[:-1], tensor.shape[-1] // 32), dtype=torch.uint8),
+        ),
+    )
+
+    result = quantizer_mxfp8.quantize_params_mxfp8(
+        types.SimpleNamespace(),
+        megatron_name,
+        [(hf_name, weight)],
+        MXFP8_CONFIG,
+    )
+
+    assert [name for name, _ in result] == [hf_name, f"{hf_name}_scale_inv"]
+    assert result[0][1].shape == (3, 8, 64)
+    assert result[0][1].dtype == torch.float8_e4m3fn
+    assert result[1][1].shape == (3, 8, 2)
+    assert result[1][1].dtype == torch.uint8
+
+
+@pytest.mark.unit
 def test_processor_respects_checkpoint_exclusions_and_leaves_gdn_bf16(monkeypatch):
     monkeypatch.setattr(
         quantizer_mxfp8,
@@ -299,6 +338,8 @@ def test_converter_writes_qwen35_mxfp8_checkpoint(monkeypatch, tmp_path):
         "model-00001-of-00002.safetensors": {
             "model.language_model.layers.0.mlp.down_proj.weight": torch.ones(4, 64, dtype=torch.bfloat16),
             "model.language_model.layers.1.mlp.down_proj.weight": torch.ones(4, 64, dtype=torch.bfloat16),
+            "model.language_model.layers.1.mlp.experts.gate_up_proj": torch.ones(3, 8, 64, dtype=torch.bfloat16),
+            "model.language_model.layers.1.mlp.experts.down_proj": torch.ones(3, 8, 64, dtype=torch.bfloat16),
             "model.language_model.layers.1.linear_attn.in_proj_qkv.weight": torch.ones(4, 64, dtype=torch.bfloat16),
             "model.language_model.layers.1.linear_attn.in_proj_b.weight": torch.ones(4, 64, dtype=torch.bfloat16),
         },
@@ -356,6 +397,12 @@ def test_converter_writes_qwen35_mxfp8_checkpoint(monkeypatch, tmp_path):
     assert shard0["model.language_model.layers.0.mlp.down_proj.weight"].dtype == torch.bfloat16
     assert shard0["model.language_model.layers.1.mlp.down_proj.weight"].dtype == torch.float8_e4m3fn
     assert shard0["model.language_model.layers.1.mlp.down_proj.weight_scale_inv"].dtype == torch.uint8
+    assert shard0["model.language_model.layers.1.mlp.experts.gate_up_proj"].dtype == torch.float8_e4m3fn
+    assert shard0["model.language_model.layers.1.mlp.experts.gate_up_proj_scale_inv"].shape == (3, 8, 2)
+    assert shard0["model.language_model.layers.1.mlp.experts.gate_up_proj_scale_inv"].dtype == torch.uint8
+    assert shard0["model.language_model.layers.1.mlp.experts.down_proj"].dtype == torch.float8_e4m3fn
+    assert shard0["model.language_model.layers.1.mlp.experts.down_proj_scale_inv"].shape == (3, 8, 2)
+    assert shard0["model.language_model.layers.1.mlp.experts.down_proj_scale_inv"].dtype == torch.uint8
     assert shard0["model.language_model.layers.1.linear_attn.in_proj_qkv.weight"].dtype == torch.bfloat16
     assert "model.language_model.layers.1.linear_attn.in_proj_qkv.weight_scale_inv" not in shard0
     shard1 = load_file(output / "model-00002-of-00002.safetensors")
@@ -364,6 +411,9 @@ def test_converter_writes_qwen35_mxfp8_checkpoint(monkeypatch, tmp_path):
 
     output_index = json.loads((output / "model.safetensors.index.json").read_text(encoding="utf-8"))
     assert output_index["weight_map"]["model.language_model.layers.1.mlp.down_proj.weight_scale_inv"] == (
+        "model-00001-of-00002.safetensors"
+    )
+    assert output_index["weight_map"]["model.language_model.layers.1.mlp.experts.gate_up_proj_scale_inv"] == (
         "model-00001-of-00002.safetensors"
     )
     total_size = sum(

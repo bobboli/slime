@@ -4,6 +4,7 @@ from functools import lru_cache
 from slime.utils.mxfp8 import (
     is_mxfp8_weight_excluded,
     mxfp8_quantize,
+    mxfp8_scale_name,
     normalize_mxfp8_exclusions,
     validate_mxfp8_config,
 )
@@ -42,6 +43,9 @@ def quantize_params_mxfp8(args, megatron_name, converted_named_params, quantizat
     else:
         _, rest = match.groups()
 
+    if rest in {"mlp.experts.linear_fc1", "mlp.experts.linear_fc2"}:
+        return _quantize_converted_params(converted_named_params, exclusions)
+
     expert_match = re.match(r"mlp\.experts\.(.+)\.weight\d+", rest)
     if expert_match and expert_match.group(1) in {"linear_fc1", "linear_fc2"}:
         return _quantize_converted_params(converted_named_params, exclusions)
@@ -77,7 +81,5 @@ def _quantize_converted_params(converted_named_params, exclusions):
 
 
 def _quantize_param(name, weight):
-    if not name.endswith(".weight"):
-        raise ValueError(f"Expected weight parameter, got {name}.")
     qweight, scale = mxfp8_quantize(weight)
-    return [(name, qweight), (name.removesuffix(".weight") + ".weight_scale_inv", scale)]
+    return [(name, qweight), (mxfp8_scale_name(name), scale)]
