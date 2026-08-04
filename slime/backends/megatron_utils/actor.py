@@ -22,7 +22,7 @@ from slime.utils.data import process_rollout_data
 from slime.utils.distributed_utils import get_gloo_group
 from slime.utils.memory_utils import clear_memory, print_memory
 from slime.utils.misc import Box
-from slime.utils.mxfp8 import validate_mxfp8_rollout_config
+from slime.utils.mxfp8 import validate_mxfp8_rollout_config, validate_qwen35_mxfp8_exclusions
 from slime.utils.reloadable_process_group import (
     destroy_process_groups,
     monkey_patch_torch_dist,
@@ -99,7 +99,10 @@ class MegatronTrainRayActor(TrainRayActor):
             validate_mxfp8_rollout_config(
                 quantization_config,
                 getattr(self.args, "sglang_quantization", None),
+                self.args.update_weight_mode,
+                self.args.update_weight_transport,
             )
+            validate_qwen35_mxfp8_exclusions(quantization_config, self.hf_config.to_dict())
 
         self.model, self.optimizer, self.opt_param_scheduler, loaded_rollout_id = initialize_model_and_optimizer(
             args, role

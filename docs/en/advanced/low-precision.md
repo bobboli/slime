@@ -14,6 +14,7 @@ Megatron keeps the trainable checkpoint in BF16/torch_dist format. SGLang serves
 | FP8 KV cache in SGLang rollout | Stable when supported by your SGLang version/GPU stack | Increase KV cache capacity for long-context or agentic rollout by passing `--sglang-kv-cache-dtype fp8_e4m3`. |
 | INT4 rollout / INT4 QAT | Beta | Use when rollout memory/throughput pressure is high and the model path has been validated. |
 | FP8 training + FP8 rollout | Experimental | Useful for research on training/inference mismatch and throughput, but still has optimizer and checkpointing caveats. |
+| Qwen3.5-35B-A3B MXFP8 training + serialized MXFP8 online rollout | Experimental | Blackwell-only recipe on the versions pinned by the current Docker image. Do not use as a production baseline until the two-update EP4 acceptance test passes. |
 
 ## BF16 Training with FP8 Rollout
 
@@ -91,6 +92,58 @@ Only `Linear` and `GroupLinear` layers in TransformerEngine use FP8. `embedding`
 ### Known Caveat
 
 `--fp8-param-gather` can save memory, but currently requires TransformerEngine `FusedAdam`, which conflicts with the CPU Adam offload path commonly used for large Megatron-LM RL jobs.
+
+## Qwen3.5-35B-A3B MXFP8 Training and Online Rollout
+
+This recipe uses MXFP8 for Transformer Engine training operations and serves a serialized MXFP8 checkpoint in SGLang. Convert the matching Hugging Face checkpoint before launch:
+
+```bash
+python tools/convert_hf_to_mxfp8.py \
+    --model-dir $BF16_HF_CHECKPOINT \
+    --save-dir $MXFP8_HF_CHECKPOINT
+```
+
+The source must be an indexed Qwen3.5 BF16, FP16, or FP32 safetensors checkpoint, and the destination must be empty. The converter writes E4M3 weights, UE8M0 scales, and the canonical top-level `quantization_config` used by SGLang and online weight synchronization.
+
+Set `--hf-checkpoint` to the converted MXFP8 directory. Set `--load` and `--ref-load` to the matching BF16 `torch_dist` checkpoint. The serialized checkpoint metadata is authoritative, so the recipe deliberately omits `--sglang-quantization`; SGLang detects MXFP8 from `config.json`. Each full policy update sends weights and scales in the same canonical layout.
+
+The current online path supports only `--update-weight-mode full --update-weight-transport nccl`. Delta and disk updates are rejected because this recipe requires every canonical weight and scale to be overwritten before SGLang rebuilds its serving layouts.
+
+Launch the checked-in recipe with:
+
+```bash
+BASE_FOLDER=/path/to/data-and-checkpoints \
+MASTER_ADDR=ray-head-address \
+HOSTFILE=/path/to/hostfile \
+bash scripts/low_precision/run-qwen3.5-35b-a3b-mxfp8.sh
+```
+
+Its Transformer Engine precision settings are:
+
+```bash
+--transformer-impl transformer_engine
+--bf16
+--fp8-format e4m3
+--fp8-recipe mxfp8
+```
+
+`--bf16` sets the high-precision fallback and master-weight precision. The script keeps `--fp8-param-gather` off because MXFP8 parameter gather is incompatible with the pinned Megatron CPU-optimizer-offload path.
+
+Qwen3.5 Gated DeltaNet uses five plain PyTorch projections that do not enter Transformer Engine MXFP8 autocast: `in_proj_qkv`, `in_proj_z`, `in_proj_b`, `in_proj_a`, and `out_proj`. The checkpoint exclusion policy applied by the converter and live exporter keeps all five in BF16.
+
+Each rollout engine uses four GPUs with EP4 and the FlashInfer backends:
+
+```bash
+--rollout-num-gpus-per-engine 4
+--sglang-dp-size 4
+--sglang-enable-dp-attention
+--sglang-ep-size 4
+--sglang-fp8-gemm-backend flashinfer_trtllm
+--sglang-moe-runner-backend flashinfer_trtllm_routed
+--sglang-moe-a2a-backend flashinfer
+```
+
+This path requires Blackwell GPUs. The audited Docker defaults are SGLang v0.5.15.post1, Transformer Engine 2.16.1, and Megatron-LM commit `1dcf0dafa884ad52ffb243625717a3471643e087`. The separate conda installation pins older versions and is not validated for this recipe. The path remains experimental until the two-update EP4 acceptance run completes successfully.
 
 ## INT4 QAT Training
 

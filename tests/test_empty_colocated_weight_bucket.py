@@ -41,11 +41,22 @@ class _FakeMultiprocessingSerializer:
 
 
 class _FakeRemoteMethod:
-    def __init__(self):
+    def __init__(self, events=None, event=None):
         self.calls = []
+        self.events = events
+        self.event = event
 
     def remote(self, **kwargs):
         self.calls.append(kwargs)
+        if self.events is not None:
+            self.events.append(self.event)
+        return f"ref-{len(self.calls)}"
+
+
+class _FakePostProcessRemoteMethod(_FakeRemoteMethod):
+    def remote(self, **kwargs):
+        self.calls.append(kwargs)
+        self.events.append("prepare" if kwargs["restore_weights_before_load"] else "finalize")
         return f"ref-{len(self.calls)}"
 
 
@@ -55,7 +66,13 @@ class _FakeEngine:
 
 
 def _install_fake_deps(monkeypatch):
-    dist_state = types.SimpleNamespace(rank=0, world_size=2, gathered=None, local_object=None)
+    dist_state = types.SimpleNamespace(
+        rank=0,
+        world_size=2,
+        gathered=None,
+        local_object=None,
+        post_process_calls=[],
+    )
 
     slime_pkg = types.ModuleType("slime")
     slime_pkg.__path__ = [str(REPO_ROOT / "slime")]
@@ -82,6 +99,7 @@ def _install_fake_deps(monkeypatch):
     dist_mod.get_rank = lambda: dist_state.rank
     dist_mod.get_world_size = lambda group=None: dist_state.world_size
     dist_mod.gather_object = gather_object
+    dist_mod.barrier = lambda group=None: None
 
     torch_mod = types.ModuleType("torch")
     torch_mod.Tensor = object
@@ -90,11 +108,17 @@ def _install_fake_deps(monkeypatch):
     torch_mod.distributed = dist_mod
     torch_mod.empty = lambda size, dtype, device: {"size": size, "dtype": dtype, "device": device}
     torch_mod.no_grad = lambda: (lambda fn: fn)
-    torch_mod.cuda = types.SimpleNamespace(current_device=lambda: "cuda:0", ipc_collect=lambda: None)
+    torch_mod.cuda = types.SimpleNamespace(
+        current_device=lambda: "cuda:0",
+        empty_cache=lambda: None,
+        ipc_collect=lambda: None,
+        synchronize=lambda: None,
+    )
     torch_mod.nn = types.SimpleNamespace(Module=object)
 
     ray_mod = types.ModuleType("ray")
     ray_mod.ObjectRef = object
+    ray_mod.get = lambda refs: refs
     ray_actor_mod = types.ModuleType("ray.actor")
     ray_actor_mod.ActorHandle = object
 
@@ -129,7 +153,11 @@ def _install_fake_deps(monkeypatch):
     )
     update_from_distributed_mod.connect_rollout_engines_from_distributed = lambda *args, **kwargs: None
     update_from_distributed_mod.disconnect_rollout_engines_from_distributed = lambda *args, **kwargs: None
-    update_from_distributed_mod.post_process_weights = lambda *args, **kwargs: None
+
+    def post_process_weights(**kwargs):
+        dist_state.post_process_calls.append(kwargs)
+
+    update_from_distributed_mod.post_process_weights = post_process_weights
     update_from_distributed_mod.update_weights_from_distributed = lambda *args, **kwargs: []
 
     monkeypatch.setitem(sys.modules, "slime", slime_pkg)
@@ -171,6 +199,33 @@ def _load_update_weight_module(monkeypatch):
     sys.modules.pop(module_name, None)
     module_path = (
         REPO_ROOT / "slime" / "backends" / "megatron_utils" / "update_weight" / "update_weight_from_tensor.py"
+    )
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, module_name, module)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module, dist_state
+
+
+def _load_distributed_weight_module(monkeypatch):
+    dist_state = _install_fake_deps(monkeypatch)
+
+    common_mod = types.ModuleType("slime.backends.megatron_utils.update_weight.common")
+    common_mod.all_gather_param = lambda _name, param: param
+    common_mod.named_params_and_buffers = lambda *args, **kwargs: ()
+    monkeypatch.setitem(sys.modules, "slime.backends.megatron_utils.update_weight.common", common_mod)
+
+    distributed_utils_mod = sys.modules["slime.utils.distributed_utils"]
+    distributed_utils_mod.init_process_group = lambda *args, **kwargs: None
+    http_utils_mod = types.ModuleType("slime.utils.http_utils")
+    http_utils_mod._wrap_ipv6 = lambda address: address
+    monkeypatch.setitem(sys.modules, "slime.utils.http_utils", http_utils_mod)
+
+    module_name = "slime.backends.megatron_utils.update_weight.update_weight_from_distributed"
+    sys.modules.pop(module_name, None)
+    module_path = (
+        REPO_ROOT / "slime" / "backends" / "megatron_utils" / "update_weight" / "update_weight_from_distributed.py"
     )
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     module = importlib.util.module_from_spec(spec)
@@ -225,6 +280,83 @@ def test_source_rank_pads_empty_colocated_bucket_entries(monkeypatch):
             "load_format": "flattened_bucket",
             "weight_version": "7",
         }
+    ]
+
+
+def test_mxfp8_update_brackets_all_buckets_with_layout_processing(monkeypatch):
+    module, dist_state = _load_update_weight_module(monkeypatch)
+    events = []
+
+    def post_process_weights(**kwargs):
+        events.append("prepare" if kwargs["restore_weights_before_load"] else "finalize")
+        dist_state.post_process_calls.append(kwargs)
+
+    monkeypatch.setattr(module, "post_process_weights", post_process_weights)
+
+    engine = types.SimpleNamespace(
+        pause_generation=_FakeRemoteMethod(events, "pause"),
+        flush_cache=_FakeRemoteMethod(events, "flush"),
+        continue_generation=_FakeRemoteMethod(events, "continue"),
+    )
+    updater = module.UpdateWeightFromTensor.__new__(module.UpdateWeightFromTensor)
+    updater.rank = 0
+    updater.weight_version = 0
+    updater.rollout_engines = [engine]
+    updater.quantization_config = {"quant_method": "mxfp8"}
+    updater.weights_getter = lambda: {}
+    updater._expert_transfer_plan = []
+    updater._full_param_info_buckets = []
+    updater._hf_weight_iterator = types.SimpleNamespace(
+        get_hf_weight_chunks=lambda *args, **kwargs: ([("weight.1", object())], [("weight.2", object())])
+    )
+    updater._send_hf_params = lambda tensors: (events.append(tensors[0][0]) or [], [])
+
+    updater.update_weights()
+
+    assert updater.weight_version == 1
+    assert len(engine.pause_generation.calls) == 1
+    assert len(engine.flush_cache.calls) == 1
+    assert len(engine.continue_generation.calls) == 1
+    assert events == ["pause", "flush", "prepare", "weight.1", "weight.2", "finalize", "continue"]
+    assert dist_state.post_process_calls == [
+        {
+            "restore_weights_before_load": True,
+            "post_process_quantization": False,
+            "rollout_engines": [engine],
+        },
+        {
+            "restore_weights_before_load": False,
+            "post_process_quantization": True,
+            "rollout_engines": [engine],
+        },
+    ]
+
+
+def test_mxfp8_distributed_update_finalizes_after_all_buckets(monkeypatch):
+    module, _ = _load_distributed_weight_module(monkeypatch)
+    events = []
+
+    engine = types.SimpleNamespace(
+        pause_generation=_FakeRemoteMethod(events, "pause"),
+        flush_cache=_FakeRemoteMethod(events, "flush"),
+        post_process_weights=_FakePostProcessRemoteMethod(events),
+        continue_generation=_FakeRemoteMethod(events, "continue"),
+    )
+    updater = module.UpdateWeightFromDistributed.__new__(module.UpdateWeightFromDistributed)
+    updater.rank = 0
+    updater.weight_version = 0
+    updater.rollout_engines = [engine]
+    updater.quantization_config = {"quant_method": "mxfp8"}
+    updater._is_pp_src_rank = False
+    updater._send_weights = lambda _pbar: events.extend(("weight.1", "weight.2"))
+
+    updater.update_weights()
+
+    assert updater.weight_version == 1
+    assert events == ["pause", "flush", "prepare", "weight.1", "weight.2", "finalize", "continue"]
+    assert engine.post_process_weights.calls == [
+        {"restore_weights_before_load": True, "post_process_quantization": False},
+        {"restore_weights_before_load": False, "post_process_quantization": True},
     ]
 
 

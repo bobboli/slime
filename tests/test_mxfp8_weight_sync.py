@@ -108,15 +108,44 @@ def test_te_quantizer_rejects_invalid_inputs(weight, message):
 
 @pytest.mark.unit
 def test_mxfp8_config_and_rollout_override_validation():
-    mxfp8.validate_mxfp8_rollout_config(MXFP8_CONFIG, None)
-    mxfp8.validate_mxfp8_rollout_config(MXFP8_CONFIG, "mxfp8")
+    mxfp8.validate_mxfp8_rollout_config(MXFP8_CONFIG, None, "full", "nccl")
+    mxfp8.validate_mxfp8_rollout_config(MXFP8_CONFIG, "mxfp8", "full", "nccl")
 
     with pytest.raises(ValueError, match="serialized MXFP8 checkpoint"):
-        mxfp8.validate_mxfp8_rollout_config(None, "mxfp8")
+        mxfp8.validate_mxfp8_rollout_config(None, "mxfp8", "full", "nccl")
     with pytest.raises(ValueError, match="conflicts"):
-        mxfp8.validate_mxfp8_rollout_config(MXFP8_CONFIG, "fp8")
+        mxfp8.validate_mxfp8_rollout_config(MXFP8_CONFIG, "fp8", "full", "nccl")
+    with pytest.raises(ValueError, match="requires --update-weight-mode=full"):
+        mxfp8.validate_mxfp8_rollout_config(MXFP8_CONFIG, None, "delta", "disk")
     with pytest.raises(ValueError, match="weight_block_size"):
         mxfp8.validate_mxfp8_config({**MXFP8_CONFIG, "weight_block_size": [128, 128]})
+
+
+@pytest.mark.unit
+def test_qwen35_mxfp8_requires_every_gdn_projection_in_high_precision():
+    config = {
+        "model_type": "qwen3_5_moe",
+        "text_config": {
+            "num_hidden_layers": 4,
+            "full_attention_interval": 2,
+        },
+    }
+    exclusions = mxfp8.normalize_mxfp8_exclusions(
+        [
+            f"model.language_model.layers.{layer}.linear_attn.{module}"
+            for layer in (0, 2)
+            for module in ("in_proj_qkv", "in_proj_z", "in_proj_b", "in_proj_a", "out_proj")
+        ]
+    )
+    quantization_config = {**MXFP8_CONFIG, "modules_to_not_convert": list(exclusions)}
+
+    mxfp8.validate_qwen35_mxfp8_exclusions(quantization_config, config)
+
+    quantization_config["modules_to_not_convert"].remove("model.layers.2.linear_attn.in_proj_qkv")
+    with pytest.raises(ValueError, match="in_proj_qkv"):
+        mxfp8.validate_qwen35_mxfp8_exclusions(quantization_config, config)
+    with pytest.raises(ValueError, match="only Qwen3.5"):
+        mxfp8.validate_qwen35_mxfp8_exclusions(quantization_config, {"model_type": "llama"})
 
 
 @pytest.mark.unit
@@ -351,7 +380,11 @@ def test_converter_writes_qwen35_mxfp8_checkpoint(monkeypatch, tmp_path):
 def test_converter_rejects_quantized_source_and_nonempty_output(tmp_path):
     converter = _load_converter_module()
     with pytest.raises(ValueError, match="Only unquantized"):
-        converter._validate_source_config({"quantization_config": {"quant_method": "fp8"}})
+        converter._validate_source_config(
+            {"model_type": "qwen3_5_moe", "quantization_config": {"quant_method": "fp8"}}
+        )
+    with pytest.raises(ValueError, match="only Qwen3.5"):
+        converter._validate_source_config({"model_type": "llama"})
 
     source = tmp_path / "source"
     output = tmp_path / "output"

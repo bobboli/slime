@@ -13,6 +13,14 @@ _PACKED_MODULE_GROUPS = {
     "in_proj_ba": ("in_proj_b", "in_proj_a"),
 }
 
+_QWEN35_GDN_MODULES = (
+    "in_proj_qkv",
+    "in_proj_z",
+    "in_proj_b",
+    "in_proj_a",
+    "out_proj",
+)
+
 
 def validate_mxfp8_config(quantization_config: Mapping[str, object]) -> None:
     """Validate the serialized MXFP8 checkpoint contract used for rollout updates."""
@@ -39,6 +47,8 @@ def validate_mxfp8_config(quantization_config: Mapping[str, object]) -> None:
 def validate_mxfp8_rollout_config(
     checkpoint_quantization_config: Mapping[str, object] | None,
     requested_quantization: str | None,
+    update_weight_mode: str,
+    update_weight_transport: str,
 ) -> None:
     """Reject ambiguous BF16-to-MXFP8 startup and conflicting rollout overrides."""
     checkpoint_method = (
@@ -58,6 +68,68 @@ def validate_mxfp8_rollout_config(
     if requested_quantization not in (None, "mxfp8"):
         raise ValueError(
             f"The serialized MXFP8 checkpoint conflicts with --sglang-quantization={requested_quantization}."
+        )
+    if (update_weight_mode, update_weight_transport) != ("full", "nccl"):
+        raise ValueError(
+            "Serialized MXFP8 online rollout currently requires "
+            "--update-weight-mode=full and --update-weight-transport=nccl."
+        )
+
+
+def validate_qwen35_mxfp8_exclusions(
+    quantization_config: Mapping[str, object] | None,
+    hf_config: Mapping[str, object],
+) -> None:
+    """Require Qwen3.5 Gated DeltaNet projections to remain in high precision."""
+    if not quantization_config or quantization_config.get("quant_method") != "mxfp8":
+        return
+    validate_mxfp8_config(quantization_config)
+
+    text_config = hf_config.get("text_config", hf_config)
+    if not isinstance(text_config, Mapping):
+        raise ValueError("MXFP8 text_config must be a mapping.")
+    model_type = text_config.get("model_type", hf_config.get("model_type", ""))
+    if not isinstance(model_type, str) or not model_type.startswith("qwen3_5"):
+        raise ValueError("Serialized MXFP8 online rollout currently supports only Qwen3.5 models.")
+
+    num_hidden_layers = text_config.get("num_hidden_layers")
+    if not isinstance(num_hidden_layers, int) or num_hidden_layers <= 0:
+        raise ValueError("Qwen3.5 MXFP8 requires a positive num_hidden_layers value.")
+
+    layer_types = text_config.get("layer_types")
+    if layer_types is None:
+        full_attention_interval = text_config.get("full_attention_interval", 4)
+        if not isinstance(full_attention_interval, int) or full_attention_interval <= 0:
+            raise ValueError("Qwen3.5 MXFP8 requires a positive full_attention_interval value.")
+        layer_types = [
+            "full_attention" if (layer_index + 1) % full_attention_interval == 0 else "linear_attention"
+            for layer_index in range(num_hidden_layers)
+        ]
+    elif (
+        not isinstance(layer_types, Sequence)
+        or isinstance(layer_types, (str, bytes))
+        or len(layer_types) != num_hidden_layers
+    ):
+        raise ValueError("Qwen3.5 MXFP8 layer_types must contain one entry per hidden layer.")
+
+    exclusions = quantization_config.get("modules_to_not_convert", ())
+    if not isinstance(exclusions, Sequence) or isinstance(exclusions, (str, bytes)):
+        raise ValueError("MXFP8 modules_to_not_convert must be a list of module names.")
+    missing = []
+    for layer_index, layer_type in enumerate(layer_types):
+        if layer_type != "linear_attention":
+            continue
+        for module_name in _QWEN35_GDN_MODULES:
+            weight_name = f"model.layers.{layer_index}.linear_attn.{module_name}.weight"
+            if not is_mxfp8_weight_excluded(weight_name, exclusions):
+                missing.append(weight_name.removesuffix(".weight"))
+
+    if missing:
+        preview = ", ".join(missing[:8])
+        suffix = " ..." if len(missing) > 8 else ""
+        raise ValueError(
+            "Qwen3.5 MXFP8 requires every Gated DeltaNet projection to remain in high precision; "
+            f"modules_to_not_convert is missing: {preview}{suffix}"
         )
 
 

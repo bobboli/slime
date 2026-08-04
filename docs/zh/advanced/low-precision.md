@@ -14,6 +14,7 @@ Megatron 侧保持 BF16/torch_dist 的可训练 checkpoint；SGLang 侧使用 FP
 | SGLang rollout FP8 KV cache | Stable，取决于当前 SGLang 版本和 GPU stack 支持 | 通过 `--sglang-kv-cache-dtype fp8_e4m3` 提升 long-context 或 agentic rollout 的 KV cache 容量。 |
 | INT4 rollout / INT4 QAT | Beta | 当 rollout 显存或吞吐压力很高，并且目标模型路径已经验证时使用。 |
 | FP8 training + FP8 rollout | Experimental | 适合研究训推不一致和吞吐优化，但仍有 optimizer/checkpoint 相关限制。 |
+| Qwen3.5-35B-A3B MXFP8 training + serialized MXFP8 online rollout | Experimental | 仅支持 Blackwell 和当前 Docker image 固定的软件版本。在 EP4 两次更新验收通过前，不应作为生产基线。 |
 
 ## BF16 训练 + FP8 Rollout
 
@@ -91,6 +92,58 @@ bash scripts/low_precision/run-qwen3-30b-a3b-fp8.sh
 ### 已知限制
 
 `--fp8-param-gather` 可以节省显存，但目前需要 TransformerEngine `FusedAdam`，这与大规模 Megatron-LM RL 中常用的 CPU Adam offload 路径冲突。
+
+## Qwen3.5-35B-A3B MXFP8 训练与 Online Rollout
+
+该 recipe 在 Transformer Engine 训练算子中使用 MXFP8，并让 SGLang 加载序列化的 MXFP8 checkpoint。启动前先转换对应的 Hugging Face checkpoint：
+
+```bash
+python tools/convert_hf_to_mxfp8.py \
+    --model-dir $BF16_HF_CHECKPOINT \
+    --save-dir $MXFP8_HF_CHECKPOINT
+```
+
+源 checkpoint 必须是带索引的 Qwen3.5 BF16、FP16 或 FP32 safetensors，目标目录必须为空。转换器会写入 E4M3 权重、UE8M0 scale，以及 SGLang 和 online weight synchronization 共用的规范化顶层 `quantization_config`。
+
+将 `--hf-checkpoint` 指向转换后的 MXFP8 目录，并将 `--load` 和 `--ref-load` 指向匹配的 BF16 `torch_dist` checkpoint。序列化 checkpoint 的 metadata 是唯一依据，因此 recipe 刻意不传 `--sglang-quantization`；SGLang 会从 `config.json` 检测 MXFP8。每次 full policy update 都以相同的规范布局发送权重和 scale。
+
+当前 online 路径只支持 `--update-weight-mode full --update-weight-transport nccl`。Delta 和 disk update 会被拒绝，因为该 recipe 必须在 SGLang 重建 serving layout 前完整覆盖所有规范化权重和 scale。
+
+启动已提交的 recipe：
+
+```bash
+BASE_FOLDER=/path/to/data-and-checkpoints \
+MASTER_ADDR=ray-head-address \
+HOSTFILE=/path/to/hostfile \
+bash scripts/low_precision/run-qwen3.5-35b-a3b-mxfp8.sh
+```
+
+Transformer Engine 精度参数如下：
+
+```bash
+--transformer-impl transformer_engine
+--bf16
+--fp8-format e4m3
+--fp8-recipe mxfp8
+```
+
+`--bf16` 设置高精度 fallback 和 master-weight 精度。脚本保持关闭 `--fp8-param-gather`，因为 MXFP8 parameter gather 与当前固定版本的 Megatron CPU optimizer offload 路径不兼容。
+
+Qwen3.5 Gated DeltaNet 有五个普通 PyTorch projection，不会进入 Transformer Engine MXFP8 autocast：`in_proj_qkv`、`in_proj_z`、`in_proj_b`、`in_proj_a` 和 `out_proj`。转换器和 live exporter 共用 checkpoint exclusion policy，让这五个 projection 保持 BF16。
+
+每个 rollout engine 使用四张 GPU、EP4 和 FlashInfer backend：
+
+```bash
+--rollout-num-gpus-per-engine 4
+--sglang-dp-size 4
+--sglang-enable-dp-attention
+--sglang-ep-size 4
+--sglang-fp8-gemm-backend flashinfer_trtllm
+--sglang-moe-runner-backend flashinfer_trtllm_routed
+--sglang-moe-a2a-backend flashinfer
+```
+
+该路径要求 Blackwell GPU。已审计的 Docker 默认版本是 SGLang v0.5.15.post1、Transformer Engine 2.16.1，以及 Megatron-LM commit `1dcf0dafa884ad52ffb243625717a3471643e087`。独立 conda 安装目前固定了更旧的版本，尚未验证该 recipe。在 EP4 完成两次 online policy update 的验收运行前，该路径保持 experimental 状态。
 
 ## INT4 QAT 训练
 

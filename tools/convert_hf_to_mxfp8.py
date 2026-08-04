@@ -1,4 +1,4 @@
-"""Convert an unquantized, indexed Hugging Face safetensors checkpoint to MXFP8.
+"""Convert an unquantized Qwen3.5 Hugging Face safetensors checkpoint to MXFP8.
 
 The source must contain ``model.safetensors.index.json`` and BF16, FP16, or
 FP32 weight shards. The output is a serialized MXFP8 checkpoint for SGLang.
@@ -16,12 +16,7 @@ import safetensors.torch
 import torch
 from tqdm import tqdm
 
-from slime.utils.mxfp8 import (
-    MXFP8_GROUP_SIZE,
-    is_mxfp8_weight_excluded,
-    mxfp8_quantize,
-    normalize_mxfp8_exclusions,
-)
+from slime.utils.mxfp8 import MXFP8_GROUP_SIZE, is_mxfp8_weight_excluded, mxfp8_quantize, normalize_mxfp8_exclusions
 
 TARGET_MXFP8_BLOCK_SIZE = [1, MXFP8_GROUP_SIZE]
 
@@ -77,6 +72,13 @@ def _num_hidden_layers(config: Mapping[str, object]) -> int:
 
 
 def _validate_source_config(config: Mapping[str, object]) -> None:
+    text_config = config.get("text_config", config)
+    if not isinstance(text_config, Mapping):
+        raise ValueError("Qwen3.5 text_config must be a mapping.")
+    model_type = text_config.get("model_type", config.get("model_type", ""))
+    if not isinstance(model_type, str) or not model_type.startswith("qwen3_5"):
+        raise ValueError("MXFP8 checkpoint conversion currently supports only Qwen3.5 models.")
+
     quantization_config = config.get("quantization_config")
     if quantization_config in (None, {}):
         return
