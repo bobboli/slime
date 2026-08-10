@@ -143,8 +143,6 @@ Qwen3.5 Gated DeltaNet 有五个普通 PyTorch projection，不会进入 Transfo
 --sglang-moe-a2a-backend flashinfer
 ```
 
-该路径要求 Blackwell GPU。已审计的 Docker 默认版本是 SGLang v0.5.15.post1、Transformer Engine 2.16.1，以及 Megatron-LM commit `1dcf0dafa884ad52ffb243625717a3471643e087`。独立 conda 安装目前固定了更旧的版本，尚未验证该 recipe。在 EP4 完成两次 online policy update 的验收运行前，该路径保持 experimental 状态。
-
 ## INT4 QAT 训练
 
 INT4 STE（Straight-Through Estimator）训练和 INT4 inference 可以进一步降低 rollout 显存并提升吞吐。在目标模型和 reward setup 验证前，请把这条路径视作 beta。

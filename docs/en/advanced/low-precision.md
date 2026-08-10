@@ -143,8 +143,6 @@ Each rollout engine uses four GPUs with EP4 and the FlashInfer backends:
 --sglang-moe-a2a-backend flashinfer
 ```
 
-This path requires Blackwell GPUs. The audited Docker defaults are SGLang v0.5.15.post1, Transformer Engine 2.16.1, and Megatron-LM commit `1dcf0dafa884ad52ffb243625717a3471643e087`. The separate conda installation pins older versions and is not validated for this recipe. The path remains experimental until the two-update EP4 acceptance run completes successfully.
-
 ## INT4 QAT Training
 
 INT4 STE (Straight-Through Estimator) training and INT4 inference can further reduce rollout memory and improve throughput. Treat this path as beta unless you have validated the target model and reward setup.
