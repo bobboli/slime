@@ -143,6 +143,8 @@ Qwen3.5 Gated DeltaNet 有五个普通 PyTorch projection，不会进入 Transfo
 --sglang-moe-a2a-backend flashinfer
 ```
 
+该 recipe 会记录 sampled train-rollout mismatch 诊断指标，但不会应用 importance-sampling weight。在 W&B 中应同时查看 `train/mis_kl`、`train/mis_k3_kl` 和 `train/train_rollout_logprob_abs_diff`；额外的 trainer log-prob forward 已包含在性能指标中。
+
 ## INT4 QAT 训练
 
 INT4 STE（Straight-Through Estimator）训练和 INT4 inference 可以进一步降低 rollout 显存并提升吞吐。在目标模型和 reward setup 验证前，请把这条路径视作 beta。

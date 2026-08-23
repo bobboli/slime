@@ -262,6 +262,7 @@ if [[ -n "${WANDB_PROJECT}" ]]; then
     --use-wandb
     --wandb-project "${WANDB_PROJECT}"
     --wandb-group "${WANDB_GROUP}"
+    --disable-wandb-random-suffix
   )
 fi
 
@@ -273,6 +274,9 @@ MISC_ARGS=(
   --attention-softmax-in-fp32
   --attention-backend flash
   --loss-mask-type qwen3_5
+  --get-mismatch-metrics
+  --custom-tis-function-path examples.train_infer_mismatch_helper.mis.compute_mis_weights_with_cp
+  --custom-config-path "${SCRIPT_DIR}/../../examples/train_infer_mismatch_helper/metrics_only.yaml"
 )
 
 ray stop --force || true

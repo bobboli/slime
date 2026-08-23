@@ -143,6 +143,8 @@ Each rollout engine uses four GPUs with EP4 and the FlashInfer backends:
 --sglang-moe-a2a-backend flashinfer
 ```
 
+The recipe records sampled train-rollout mismatch diagnostics without applying importance-sampling weights. In W&B, use `train/mis_kl`, `train/mis_k3_kl`, and `train/train_rollout_logprob_abs_diff` together; the additional trainer log-prob forward is included in the reported performance metrics.
+
 ## INT4 QAT Training
 
 INT4 STE (Straight-Through Estimator) training and INT4 inference can further reduce rollout memory and improve throughput. Treat this path as beta unless you have validated the target model and reward setup.

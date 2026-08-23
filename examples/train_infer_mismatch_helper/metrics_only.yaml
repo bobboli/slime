@@ -1,0 +1,5 @@
+use_tis: false
+tis_lower_bound: 0.5
+tis_upper_bound: 2.0
+rs_lower_bound: null
+rs_upper_bound: null
