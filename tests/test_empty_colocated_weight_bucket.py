@@ -87,6 +87,7 @@ def _install_fake_deps(monkeypatch):
     accelerator_mod = types.ModuleType("slime.utils.accelerator")
     accelerator_mod.device = lambda: "cuda:0"
     accelerator_mod.current_device = lambda: "cuda:0"
+    accelerator_mod.empty_cache = lambda: None
     accelerator_mod.ipc_collect = lambda: None
 
     dist_mod = types.ModuleType("torch.distributed")
