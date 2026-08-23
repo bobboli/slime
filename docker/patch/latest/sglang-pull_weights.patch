@@ -1,5 +1,5 @@
 diff --git a/python/sglang/srt/entrypoints/http_server.py b/python/sglang/srt/entrypoints/http_server.py
-index c74f7666a9972ba7ee5b0c94c805189e640fbbda..107c6eadf6a33e19f4f34d3668c22856ea221e1a 100644
+index 7edcaa580c7a8157f0026c79cfc430070c8e39a5..a6bcd6fa405baf326a9230e67a5302bd68ca39bc 100644
 --- a/python/sglang/srt/entrypoints/http_server.py
 +++ b/python/sglang/srt/entrypoints/http_server.py
 @@ -129,6 +129,7 @@ from sglang.srt.managers.io_struct import (
@@ -10,7 +10,7 @@ index c74f7666a9972ba7ee5b0c94c805189e640fbbda..107c6eadf6a33e19f4f34d3668c22856
      ReleaseMemoryOccupationReqInput,
      ResumeMemoryOccupationReqInput,
      SendWeightsToRemoteInstanceReqInput,
-@@ -1344,6 +1345,21 @@ async def post_process_weights(req: PostProcessWeightsReqInput, request: Request
+@@ -1346,6 +1347,21 @@ async def post_process_weights(
      )
  
  
