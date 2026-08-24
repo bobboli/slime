@@ -1325,8 +1325,7 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
                 nargs="*",
                 default=None,
                 help=(
-                    "Tensor-name substrings to exclude from the rollout weight "
-                    "snapshot, reset, and equality check."
+                    "Tensor-name substrings to exclude from the rollout weight " "snapshot, reset, and equality check."
                 ),
             )
             return parser

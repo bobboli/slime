@@ -580,9 +580,7 @@ class RolloutManager:
     def check_weights(self, action: str, skip_tensor_list: list[str] | None = None):
         return ray.get(
             [
-                engine.check_weights.remote(
-                    action=action, skip_tensor_list=skip_tensor_list
-                )
+                engine.check_weights.remote(action=action, skip_tensor_list=skip_tensor_list)
                 for engine in self.rollout_engines
             ]
         )
