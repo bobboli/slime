@@ -27,7 +27,12 @@ def train(args):
     actor_model.update_weights()
 
     if args.check_weight_update_equal:
-        ray.get(rollout_manager.check_weights.remote(action="compare"))
+        ray.get(
+            rollout_manager.check_weights.remote(
+                action="compare",
+                skip_tensor_list=args.check_weight_update_skip_list,
+            )
+        )
 
     if args.offload_rollout:
         ray.get(rollout_manager.onload_kv.remote())

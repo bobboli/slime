@@ -1319,6 +1319,16 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
             )
             reset_arg(parser, "--record-memory-history", action="store_true", default=False)
             parser.add_argument("--check-weight-update-equal", action="store_true")
+            parser.add_argument(
+                "--check-weight-update-skip-list",
+                type=str,
+                nargs="*",
+                default=None,
+                help=(
+                    "Tensor-name substrings to exclude from the rollout weight "
+                    "snapshot, reset, and equality check."
+                ),
+            )
             return parser
 
         def add_network_arguments(parser):
