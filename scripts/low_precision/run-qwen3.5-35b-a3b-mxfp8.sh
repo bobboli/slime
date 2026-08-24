@@ -41,6 +41,7 @@ SAVE_INTERVAL="${SAVE_INTERVAL:-20}"
 ROLLOUT_NUM_GPUS="${ROLLOUT_NUM_GPUS:-$((ACTOR_NUM_NODES * ACTOR_NUM_GPUS_PER_NODE))}"
 ROLLOUT_NUM_GPUS_PER_ENGINE="${ROLLOUT_NUM_GPUS_PER_ENGINE:-4}"
 SGLANG_MEM_FRACTION_STATIC="${SGLANG_MEM_FRACTION_STATIC:-0.5}"
+CHECK_WEIGHT_UPDATE_EQUAL="${CHECK_WEIGHT_UPDATE_EQUAL:-0}"
 WANDB_PROJECT="${WANDB_PROJECT:-}"
 WANDB_GROUP="${WANDB_GROUP:-qwen3.5-35b-a3b-mxfp8}"
 
@@ -86,6 +87,10 @@ if ((ROLLOUT_NUM_GPUS % ROLLOUT_NUM_GPUS_PER_ENGINE != 0)); then
 fi
 if [[ "${ROLLOUT_NUM_GPUS_PER_ENGINE}" -ne 4 ]]; then
   echo "This recipe requires four GPUs per rollout engine for DP4/EP4." >&2
+  exit 1
+fi
+if [[ "${CHECK_WEIGHT_UPDATE_EQUAL}" != 0 && "${CHECK_WEIGHT_UPDATE_EQUAL}" != 1 ]]; then
+  echo "CHECK_WEIGHT_UPDATE_EQUAL must be 0 or 1." >&2
   exit 1
 fi
 
@@ -278,6 +283,9 @@ MISC_ARGS=(
   --custom-tis-function-path examples.train_infer_mismatch_helper.mis.compute_mis_weights_with_cp
   --custom-config-path "${SCRIPT_DIR}/../../examples/train_infer_mismatch_helper/metrics_only.yaml"
 )
+if [[ "${CHECK_WEIGHT_UPDATE_EQUAL}" == 1 ]]; then
+  MISC_ARGS+=(--check-weight-update-equal)
+fi
 
 ray stop --force || true
 pkill -9 sglang || true
