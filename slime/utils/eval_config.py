@@ -56,6 +56,11 @@ DATASET_RUNTIME_SPECS: dict[str, dict[str, tuple[str, ...]]] = {
 }
 
 DATASET_SAMPLE_SPECS: dict[str, dict[str, tuple[str, ...]]] = {
+    "prompt_template": {
+        "dataset_keys": ("prompt_template",),
+        "default_keys": ("prompt_template",),
+        "arg_attrs": (),
+    },
     "input_key": {
         "dataset_keys": ("input_key",),
         "default_keys": ("input_key",),
@@ -141,6 +146,7 @@ class EvalDatasetConfig:
     custom_rm_path: str | None = None
 
     # Dataset-specific overrides
+    prompt_template: str | None = None
     input_key: str | None = None
     label_key: str | None = None
     tool_key: str | None = None
@@ -190,6 +196,8 @@ class EvalDatasetConfig:
 
     def __post_init__(self) -> None:
         self.metadata_overrides = _ensure_metadata_overrides(self.metadata_overrides)
+        if self.prompt_template is not None and self.prompt_template.count("{prompt}") != 1:
+            raise ValueError("prompt_template must contain exactly one `{prompt}` placeholder.")
         if self.min_eval_samples is not None and self.min_eval_samples <= 0:
             raise ValueError("min_eval_samples must be positive when set.")
 
@@ -199,6 +207,7 @@ class EvalDatasetConfig:
         return (
             self.name,
             self.path,
+            self.prompt_template,
             self.input_key,
             self.label_key,
             self.tool_key,

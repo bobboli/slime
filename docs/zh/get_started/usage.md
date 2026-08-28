@@ -183,6 +183,24 @@ sglang 的加载非常简单，只需要：
 请注意，这里的 `step_loss_mask`（默认值为 1）字段为 SFT 阶段提供，若设置为 0，则会将该轮 `loss_mask` 设置为 0；若设置为 1，则使用正常 `loss_mask`。
 另外我们还提供了一个 metadata_key，默认为 `"metadata"`，读取后我们会把数据中的 metadata 加载进 slime，可能会对自定义数据生成或者自定义 reward model 有帮助。
 
+评测 prompt 可以在加载时包装，无需重写原始数据集。在 `--eval-config` 的数据集配置中设置 `prompt_template`，并包含且仅包含一个 `{prompt}` 占位符。对于对话格式的数据，slime 会在渲染 chat template 之前，将模板应用到最后一条 user message。
+
+```yaml
+eval:
+  datasets:
+    - name: aime
+      path: /root/aime-2024/aime-2024.jsonl
+      input_key: prompt
+      label_key: label
+      apply_chat_template: true
+      prompt_template: |-
+        Solve the following math problem step by step. The last line of your response should be of the form Answer: \boxed{$Answer} where $Answer is the answer to the problem.
+
+        {prompt}
+
+        Remember to put your answer on its own line after "Answer:".
+```
+
 如果同一次训练混合了多个数据 source，可以在 metadata 中写入 `source_name`：
 
 ```json

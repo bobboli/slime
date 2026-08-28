@@ -12,6 +12,8 @@ if [[ -z "${MASTER_ADDR:-}" ]]; then
   exit 1
 fi
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+
 ACTOR_NUM_NODES="${ACTOR_NUM_NODES:-8}"
 ACTOR_NUM_GPUS_PER_NODE="${ACTOR_NUM_GPUS_PER_NODE:-4}"
 HOSTFILE="${HOSTFILE:-}"
@@ -26,7 +28,9 @@ REF_LOAD="${REF_LOAD:-${BASE_FOLDER}/Qwen3.5-35B-A3B_torch_dist}"
 LOAD_CHECKPOINT="${LOAD_CHECKPOINT:-${REF_LOAD}}"
 SAVE_CHECKPOINT="${SAVE_CHECKPOINT:-${BASE_FOLDER}/Qwen3.5-35B-A3B_mxfp8_slime}"
 PROMPT_DATA="${PROMPT_DATA:-${BASE_FOLDER}/dapo-math-17k/dapo-math-17k.jsonl}"
-EVAL_DATA="${EVAL_DATA:-${BASE_FOLDER}/aime-2024-boxed/aime-2024.jsonl}"
+EVAL_DATA="${EVAL_DATA:-${BASE_FOLDER}/aime-2024/aime-2024.jsonl}"
+EVAL_CONFIG="${EVAL_CONFIG:-${SCRIPT_DIR}/aime-2024.yaml}"
+export EVAL_DATA
 
 NUM_ROLLOUT="${NUM_ROLLOUT:-3000}"
 ROLLOUT_BATCH_SIZE="${ROLLOUT_BATCH_SIZE:-16}"
@@ -119,7 +123,8 @@ for path in \
   "${REF_LOAD}" \
   "${LOAD_CHECKPOINT}" \
   "${PROMPT_DATA}" \
-  "${EVAL_DATA}"; do
+  "${EVAL_DATA}" \
+  "${EVAL_CONFIG}"; do
   if [[ ! -e "${path}" ]]; then
     echo "Required input not found: ${path}" >&2
     exit 1
@@ -150,7 +155,6 @@ else
 fi
 echo "HAS_NVLINK: ${HAS_NVLINK} (detected ${NVLINK_COUNT} NVLink references)"
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 # shellcheck source=../models/qwen3.5-35B-A3B.sh
 source "${SCRIPT_DIR}/../models/qwen3.5-35B-A3B.sh"
 
@@ -184,7 +188,7 @@ ROLLOUT_ARGS=(
 
 EVAL_ARGS=(
   --eval-interval "${EVAL_INTERVAL}"
-  --eval-prompt-data aime "${EVAL_DATA}"
+  --eval-config "${EVAL_CONFIG}"
   --n-samples-per-eval-prompt 8
   --eval-max-response-len "${ROLLOUT_MAX_RESPONSE_LEN}"
   --eval-temperature 1
