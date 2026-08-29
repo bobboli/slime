@@ -22,7 +22,6 @@ from slime.utils.data import process_rollout_data
 from slime.utils.distributed_utils import get_gloo_group
 from slime.utils.memory_utils import clear_memory, print_memory
 from slime.utils.misc import Box
-from slime.utils.mxfp8 import validate_mxfp8_rollout_config, validate_qwen35_mxfp8_exclusions
 from slime.utils.reloadable_process_group import (
     destroy_process_groups,
     monkey_patch_torch_dist,
@@ -45,6 +44,7 @@ from .loss import (
     get_log_probs_and_entropy,
     get_values,
 )
+from .megatron_to_hf.processors.quantizer_mxfp8 import validate_mxfp8_rollout_config, validate_qwen35_mxfp8_exclusions
 from .model import forward_only, initialize_model_and_optimizer, save, train
 from .update_weight.common import named_params_and_buffers
 from .update_weight.update_weight_from_disk import UpdateWeightFromDisk

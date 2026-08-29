@@ -24,7 +24,6 @@ if not _has_megatron:
 
 from slime.backends.megatron_utils.megatron_to_hf import processors
 from slime.backends.megatron_utils.megatron_to_hf.processors import quantizer_mxfp8
-from slime.utils import mxfp8
 
 MXFP8_CONFIG = {
     "quant_method": "mxfp8",
@@ -44,6 +43,14 @@ def _load_converter_module():
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.mark.unit
+def test_converter_and_weight_updates_share_canonical_mxfp8_contract():
+    converter = _load_converter_module()
+
+    assert converter.mxfp8_quantize is quantizer_mxfp8.mxfp8_quantize
+    assert converter.mxfp8_scale_name is quantizer_mxfp8.mxfp8_scale_name
 
 
 @pytest.mark.unit
@@ -78,7 +85,7 @@ def test_te_quantizer_flattens_pads_and_crops(monkeypatch):
     monkeypatch.setitem(sys.modules, "transformer_engine.pytorch.constants", te_constants)
 
     weight = torch.arange(6 * 64, dtype=torch.float32).view(64, 6).t()
-    qweight, scale = mxfp8.mxfp8_quantize(weight)
+    qweight, scale = quantizer_mxfp8.mxfp8_quantize(weight)
 
     assert calls["kwargs"] == {"fp8_dtype": "e4m3", "rowwise": True, "columnwise": False}
     assert calls["input"].shape == (32, 64)
@@ -103,22 +110,22 @@ def test_te_quantizer_flattens_pads_and_crops(monkeypatch):
 )
 def test_te_quantizer_rejects_invalid_inputs(weight, message):
     with pytest.raises(ValueError, match=message):
-        mxfp8.mxfp8_quantize(weight)
+        quantizer_mxfp8.mxfp8_quantize(weight)
 
 
 @pytest.mark.unit
 def test_mxfp8_config_and_rollout_override_validation():
-    mxfp8.validate_mxfp8_rollout_config(MXFP8_CONFIG, None, "full", "nccl")
-    mxfp8.validate_mxfp8_rollout_config(MXFP8_CONFIG, "mxfp8", "full", "nccl")
+    quantizer_mxfp8.validate_mxfp8_rollout_config(MXFP8_CONFIG, None, "full", "nccl")
+    quantizer_mxfp8.validate_mxfp8_rollout_config(MXFP8_CONFIG, "mxfp8", "full", "nccl")
 
     with pytest.raises(ValueError, match="serialized MXFP8 checkpoint"):
-        mxfp8.validate_mxfp8_rollout_config(None, "mxfp8", "full", "nccl")
+        quantizer_mxfp8.validate_mxfp8_rollout_config(None, "mxfp8", "full", "nccl")
     with pytest.raises(ValueError, match="conflicts"):
-        mxfp8.validate_mxfp8_rollout_config(MXFP8_CONFIG, "fp8", "full", "nccl")
+        quantizer_mxfp8.validate_mxfp8_rollout_config(MXFP8_CONFIG, "fp8", "full", "nccl")
     with pytest.raises(ValueError, match="requires --update-weight-mode=full"):
-        mxfp8.validate_mxfp8_rollout_config(MXFP8_CONFIG, None, "delta", "disk")
+        quantizer_mxfp8.validate_mxfp8_rollout_config(MXFP8_CONFIG, None, "delta", "disk")
     with pytest.raises(ValueError, match="weight_block_size"):
-        mxfp8.validate_mxfp8_config({**MXFP8_CONFIG, "weight_block_size": [128, 128]})
+        quantizer_mxfp8.validate_mxfp8_config({**MXFP8_CONFIG, "weight_block_size": [128, 128]})
 
 
 @pytest.mark.unit
@@ -130,7 +137,7 @@ def test_qwen35_mxfp8_requires_every_gdn_projection_in_high_precision():
             "full_attention_interval": 2,
         },
     }
-    exclusions = mxfp8.normalize_mxfp8_exclusions(
+    exclusions = quantizer_mxfp8.normalize_mxfp8_exclusions(
         [
             f"model.language_model.layers.{layer}.linear_attn.{module}"
             for layer in (0, 2)
@@ -139,18 +146,18 @@ def test_qwen35_mxfp8_requires_every_gdn_projection_in_high_precision():
     )
     quantization_config = {**MXFP8_CONFIG, "modules_to_not_convert": list(exclusions)}
 
-    mxfp8.validate_qwen35_mxfp8_exclusions(quantization_config, config)
+    quantizer_mxfp8.validate_qwen35_mxfp8_exclusions(quantization_config, config)
 
     quantization_config["modules_to_not_convert"].remove("model.layers.2.linear_attn.in_proj_qkv")
     with pytest.raises(ValueError, match="in_proj_qkv"):
-        mxfp8.validate_qwen35_mxfp8_exclusions(quantization_config, config)
+        quantizer_mxfp8.validate_qwen35_mxfp8_exclusions(quantization_config, config)
     with pytest.raises(ValueError, match="only Qwen3.5"):
-        mxfp8.validate_qwen35_mxfp8_exclusions(quantization_config, {"model_type": "llama"})
+        quantizer_mxfp8.validate_qwen35_mxfp8_exclusions(quantization_config, {"model_type": "llama"})
 
 
 @pytest.mark.unit
 def test_exclusions_expand_packed_modules_and_qwen35_aliases():
-    exclusions = mxfp8.normalize_mxfp8_exclusions(
+    exclusions = quantizer_mxfp8.normalize_mxfp8_exclusions(
         [
             "model.language_model.layers.2.linear_attn.in_proj_qkv",
             "model.layers.3.mlp.gate_proj",
@@ -168,8 +175,10 @@ def test_exclusions_expand_packed_modules_and_qwen35_aliases():
     ):
         assert name in exclusions
 
-    assert mxfp8.is_mxfp8_weight_excluded("model.language_model.layers.2.linear_attn.in_proj_z.weight", exclusions)
-    assert not mxfp8.is_mxfp8_weight_excluded(
+    assert quantizer_mxfp8.is_mxfp8_weight_excluded(
+        "model.language_model.layers.2.linear_attn.in_proj_z.weight", exclusions
+    )
+    assert not quantizer_mxfp8.is_mxfp8_weight_excluded(
         "model.layers.3.mlp.gate_up_projection.weight", ["model.layers.3.mlp.gate"]
     )
 

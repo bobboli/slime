@@ -16,12 +16,11 @@ import safetensors.torch
 import torch
 from tqdm import tqdm
 
-from slime.utils.mxfp8 import (
+from slime.backends.megatron_utils.megatron_to_hf.processors.quantizer_mxfp8 import (
     MXFP8_GROUP_SIZE,
     is_mxfp8_weight_excluded,
     mxfp8_quantize,
     mxfp8_scale_name,
-    mxfp8_weight_module_name,
     normalize_mxfp8_exclusions,
 )
 
@@ -53,6 +52,20 @@ _QWEN35_GDN_BF16_MODULES = (
     ".linear_attn.in_proj_a",
     ".linear_attn.out_proj",
 )
+
+_QWEN35_FUSED_EXPERT_WEIGHTS = (
+    ".mlp.experts.gate_up_proj",
+    ".mlp.experts.down_proj",
+)
+
+
+def mxfp8_weight_module_name(tensor_name: str) -> str | None:
+    """Return the module name for a canonical Qwen3.5 weight tensor."""
+    if tensor_name.endswith(".weight"):
+        return tensor_name.removesuffix(".weight")
+    if tensor_name.endswith(_QWEN35_FUSED_EXPERT_WEIGHTS):
+        return tensor_name
+    return None
 
 
 class ConversionResult:
