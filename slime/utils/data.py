@@ -139,8 +139,39 @@ def filter_long_prompt(origin_samples: list[Sample], tokenizer, processor, max_l
     return filtered_samples
 
 
-def _build_messages(data: dict, prompt_key: str, as_conversation: bool, multimodal_keys: dict = None):
-    prompt = data.get(prompt_key)
+def _apply_prompt_template(prompt, prompt_template: str | None):
+    if prompt_template is None:
+        return prompt
+
+    if prompt_template.count("{prompt}") != 1:
+        raise ValueError("prompt_template must contain exactly one `{prompt}` placeholder.")
+
+    if isinstance(prompt, str):
+        return prompt_template.replace("{prompt}", prompt)
+
+    if not isinstance(prompt, list):
+        raise TypeError(f"prompt_template requires a string or conversation prompt, got {type(prompt)}.")
+
+    for message in reversed(prompt):
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            raise TypeError("prompt_template requires the last user message content to be a string.")
+        message["content"] = prompt_template.replace("{prompt}", content)
+        return prompt
+
+    raise ValueError("prompt_template requires a conversation containing a user message.")
+
+
+def _build_messages(
+    data: dict,
+    prompt_key: str,
+    as_conversation: bool,
+    multimodal_keys: dict = None,
+    prompt_template: str | None = None,
+):
+    prompt = _apply_prompt_template(data.get(prompt_key), prompt_template)
 
     if isinstance(prompt, str):
         # If prompt is a string and we don't apply chat template, return the prompt as is.
@@ -227,12 +258,13 @@ class Dataset:
         seed=42,
         apply_chat_template=False,
         apply_chat_template_kwargs=None,
+        prompt_template=None,
     ):
         origin_samples = []
         for data in read_file(path):
             # Both chat templates and multimodal inputs require conversation format (list of message dicts)
             as_conversation = apply_chat_template or (multimodal_keys is not None)
-            prompt = _build_messages(data, prompt_key, as_conversation, multimodal_keys)
+            prompt = _build_messages(data, prompt_key, as_conversation, multimodal_keys, prompt_template)
 
             metadata = data.get(metadata_key) or {}
             tools = None

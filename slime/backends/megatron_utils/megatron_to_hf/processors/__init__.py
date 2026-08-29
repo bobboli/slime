@@ -12,6 +12,11 @@ def quantize_params(args, megatron_name, converted_named_params, quantization_co
 
         return quantize_params_fp8(args, megatron_name, converted_named_params, quantization_config, transform_ue8m0)
 
+    if quantization_config["quant_method"] == "mxfp8":
+        from .quantizer_mxfp8 import quantize_params_mxfp8
+
+        return quantize_params_mxfp8(args, megatron_name, converted_named_params, quantization_config)
+
     if quantization_config["quant_method"] == "compressed-tensors":
         from .quantizer_compressed_tensors import quantize_params_compressed_tensors
 

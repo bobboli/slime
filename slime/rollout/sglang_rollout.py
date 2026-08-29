@@ -537,6 +537,7 @@ async def eval_rollout_single_dataset(
             tool_key=dataset_cfg.tool_key,
             apply_chat_template=eval_apply_chat_template,
             apply_chat_template_kwargs=eval_apply_chat_template_kwargs,
+            prompt_template=dataset_cfg.prompt_template,
         )
     dataset = EVAL_PROMPT_DATASET[cache_key]
 

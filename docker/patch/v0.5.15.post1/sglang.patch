@@ -299,7 +299,7 @@ index f58dc2784fbb824f431a53ffc5c1091dc4e18947..4a51574b3487dbc1e474ce92ba56b5be
          """Get weights by parameter name."""
          obj = GetWeightsByNameReqInput(name=name, truncate_size=truncate_size)
 diff --git a/python/sglang/srt/entrypoints/http_server.py b/python/sglang/srt/entrypoints/http_server.py
-index bd9d7eafa1c9721a01d98c397deebf17e95a06dc..c74f7666a9972ba7ee5b0c94c805189e640fbbda 100644
+index bd9d7eafa1c9721a01d98c397deebf17e95a06dc..7edcaa580c7a8157f0026c79cfc430070c8e39a5 100644
 --- a/python/sglang/srt/entrypoints/http_server.py
 +++ b/python/sglang/srt/entrypoints/http_server.py
 @@ -127,6 +127,7 @@ from sglang.srt.managers.io_struct import (
@@ -345,16 +345,18 @@ index bd9d7eafa1c9721a01d98c397deebf17e95a06dc..c74f7666a9972ba7ee5b0c94c805189e
  
      server_args = _global_state.tokenizer_manager.server_args
  
-@@ -1322,6 +1330,20 @@ async def update_weights_from_ipc(
+@@ -1322,6 +1330,22 @@ async def update_weights_from_ipc(
          return ORJSONResponse(content, status_code=HTTPStatus.BAD_REQUEST)
  
  
 +@app.post("/post_process_weights")
 +@auth_level(AuthLevel.ADMIN_OPTIONAL)
-+async def post_process_weights(req: PostProcessWeightsReqInput, request: Request):
++async def post_process_weights(
++    obj: Annotated[PostProcessWeightsReqInput, Body()], request: Request
++):
 +    """Optional post-processing for updated weights, e.g. quantization packing."""
 +    success, message = await _global_state.tokenizer_manager.post_process_weights(
-+        req, request
++        obj, request
 +    )
 +
 +    content = {"success": success, "message": message}

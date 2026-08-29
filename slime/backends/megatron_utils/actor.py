@@ -44,6 +44,7 @@ from .loss import (
     get_log_probs_and_entropy,
     get_values,
 )
+from .megatron_to_hf.processors.quantizer_mxfp8 import validate_mxfp8_rollout_config, validate_qwen35_mxfp8_exclusions
 from .model import forward_only, initialize_model_and_optimizer, save, train
 from .update_weight.common import named_params_and_buffers
 from .update_weight.update_weight_from_disk import UpdateWeightFromDisk
@@ -92,6 +93,16 @@ class MegatronTrainRayActor(TrainRayActor):
             dist.barrier(group=get_gloo_group())
 
         dist.barrier(group=get_gloo_group())
+
+        quantization_config = getattr(self.hf_config, "quantization_config", None)
+        if role != "critic":
+            validate_mxfp8_rollout_config(
+                quantization_config,
+                getattr(self.args, "sglang_quantization", None),
+                self.args.update_weight_mode,
+                self.args.update_weight_transport,
+            )
+            validate_qwen35_mxfp8_exclusions(quantization_config, self.hf_config.to_dict())
 
         self.model, self.optimizer, self.opt_param_scheduler, loaded_rollout_id = initialize_model_and_optimizer(
             args, role
@@ -178,7 +189,7 @@ class MegatronTrainRayActor(TrainRayActor):
             self.model,
             weights_getter=lambda: self.weights_backuper.get("actor"),
             model_name=type(self.hf_config).__name__.lower() if self.args.model_name is None else self.args.model_name,
-            quantization_config=getattr(self.hf_config, "quantization_config", None),
+            quantization_config=quantization_config,
         )
         self.weight_updater.weight_version = getattr(self.args, "update_weight_start_version", 0)
 

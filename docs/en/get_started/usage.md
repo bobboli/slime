@@ -179,6 +179,24 @@ This corresponds to the following configuration:
 Please note that the `step_loss_mask` (default=1) here is for SFT phase. If it is set to 0, the turn will not contibute to the final loss; if it is set to 1, slime will use the normal `loss_mask`.
 Additionally, we provide a `metadata_key`, which defaults to `"metadata"`. When read, slime will load the metadata from the data, which can be helpful for custom data generation or creating custom reward models.
 
+Evaluation prompts can be wrapped at load time without rewriting the source dataset. Set `prompt_template` on an `--eval-config` dataset and include exactly one `{prompt}` placeholder. For conversation data, slime applies the template to the last user message before rendering the chat template.
+
+```yaml
+eval:
+  datasets:
+    - name: aime
+      path: /root/aime-2024/aime-2024.jsonl
+      input_key: prompt
+      label_key: label
+      apply_chat_template: true
+      prompt_template: |-
+        Solve the following math problem step by step. The last line of your response should be of the form Answer: \boxed{$Answer} where $Answer is the answer to the problem.
+
+        {prompt}
+
+        Remember to put your answer on its own line after "Answer:".
+```
+
 If one run mixes multiple data sources, put `source_name` in the sample metadata:
 
 ```json
